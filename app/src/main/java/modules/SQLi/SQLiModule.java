@@ -54,9 +54,10 @@ public class SQLiModule implements VulnerabilityModule {
             if (checkSingleQuoteInjectionSucceeded(sentRequest)) {
                 // Create an issue
                 String detail = String.format("""
-            A single quote was appended to %s parameter of this request and it lead to a internal server error.<br>
+            A single quote was appended to <b>%s</b> parameter of this request and it lead to a internal server error.<br>
             This might be an indication for a SQL Injection.
             """, injectionRequest.modifiedParameter);
+
                 AuditIssue issue = AuditIssue.auditIssue(
                         "SQL Injection detected",
                         detail,
