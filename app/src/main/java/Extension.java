@@ -36,9 +36,11 @@ class CustomHttpHandler implements HttpHandler {
         // Skip requests made by the extension itself
         if (request.hasHeader("X-Internal-Request")) return null;
 
-        Extension.modules.forEach(module -> {
-            module.test(request);
-        });
+        new Thread(() -> {
+            Extension.modules.forEach(module -> {
+                module.test(request);
+            });
+        }).start();
 
         return null;
     }
