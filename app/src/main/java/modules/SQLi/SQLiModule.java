@@ -16,6 +16,15 @@ import modules.VulnerabilityModule;
 import java.util.ArrayList;
 import java.util.List;
 
+class SQLiRequest {
+    public HttpRequest request;
+    public String modifiedParameter;
+
+    public SQLiRequest(final HttpRequest request, final String modifiedParameter) {
+        this.request = request;
+        this.modifiedParameter = modifiedParameter;
+    }
+}
 
 public class SQLiModule implements VulnerabilityModule {
     private MontoyaApi api;
@@ -31,38 +40,39 @@ public class SQLiModule implements VulnerabilityModule {
         this.api.logging().logToOutput(Util.formatted("Testing on " + request.url()));
 
         // Prepare Single quote injections
-        HttpRequest singleQuoteInjectionRequest = generateSingleQuoteInjectionRequest(request);
-        if (singleQuoteInjectionRequest == null) {
+        List<SQLiRequest> singleQuoteInjectionRequests = generateSingleQuoteInjectionRequests(request);
+        if (singleQuoteInjectionRequests.isEmpty()) {
             return false;
         }
 
-        HttpRequestResponse sentRequest = api.http().sendRequest(
-                singleQuoteInjectionRequest
-                        .withAddedHeader("X-Internal-Request", "true")
-        );
+        for (var injectionRequest : singleQuoteInjectionRequests) {
+            HttpRequest requestToSend = injectionRequest.request;
 
-        // Check if succeeded
-        if (checkSingleQuoteInjectionSucceeded(sentRequest)) {
-            // Create an issue
-            String detail = """
-            A single quote was appended to all parameters of this request and it lead to a internal server error.<br>
+            HttpRequestResponse sentRequest = api.http().sendRequest(requestToSend);
+
+            // Check if succeeded
+            if (checkSingleQuoteInjectionSucceeded(sentRequest)) {
+                // Create an issue
+                String detail = String.format("""
+            A single quote was appended to %s parameter of this request and it lead to a internal server error.<br>
             This might be an indication for a SQL Injection.
-            """;
-            AuditIssue issue = AuditIssue.auditIssue(
-                    "SQL Injection detected",
-                    detail,
-                    null,
-                    request.url(),
-                    AuditIssueSeverity.HIGH,
-                    AuditIssueConfidence.FIRM,
-                    null,
-                    null,
-                    AuditIssueSeverity.INFORMATION,
-                    sentRequest
-            );
+            """, injectionRequest.modifiedParameter);
+                AuditIssue issue = AuditIssue.auditIssue(
+                        "SQL Injection detected",
+                        detail,
+                        null,
+                        request.url(),
+                        AuditIssueSeverity.HIGH,
+                        AuditIssueConfidence.FIRM,
+                        null,
+                        null,
+                        AuditIssueSeverity.INFORMATION,
+                        sentRequest
+                );
 
-            this.api.siteMap().add(issue);
-            return true;
+                this.api.siteMap().add(issue);
+                return true;
+            }
         }
 
         // Prepare Double quote injections
@@ -72,25 +82,29 @@ public class SQLiModule implements VulnerabilityModule {
         return false;
     }
 
-    private HttpRequest generateSingleQuoteInjectionRequest(final HttpRequestToBeSent request) {
+    private List<SQLiRequest> generateSingleQuoteInjectionRequests(final HttpRequestToBeSent request) {
         // Inject single quote in query parameters
         this.api.logging().logToOutput(
                 Util.formatted(request.parameters().toString())
         );
 
-        List<HttpParameter> newParameters = new ArrayList<>();
+        List<SQLiRequest> newRequests = new ArrayList<>();
 
         for (var parsedHttpParameter : request.parameters()) {
             String newValue = parsedHttpParameter.value() + "'";
             HttpParameter parameter = HttpParameter.parameter(parsedHttpParameter.name(), newValue, parsedHttpParameter.type());
-            newParameters.add(parameter);
+
+            newRequests.add(
+                    new SQLiRequest(
+                            request
+                                .withUpdatedParameters(parameter)
+                                .withAddedHeader("X-Internal-Request", "True"),
+                            parameter.name()
+                    )
+            );
         }
 
-        if (newParameters.isEmpty()) {
-            return null;
-        }
-
-        return request.withUpdatedParameters(newParameters);
+        return newRequests;
     }
 
     private boolean checkSingleQuoteInjectionSucceeded(HttpRequestResponse requestResponse) {
